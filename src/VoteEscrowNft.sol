@@ -19,7 +19,7 @@ contract VoteEscrowNft is IVoteEscrow, ERC721, ReentrancyGuard {
   uint256 public immutable firstEpochTime;
   uint256 public immutable epochLength;
 
-  uint256 public totalVotingPower;
+  uint256 public override totalVotingPower;
   uint256 public totalAmount;
   uint256 public totalDecay;
   uint256 public totalLength;
