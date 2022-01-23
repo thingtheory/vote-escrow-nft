@@ -67,8 +67,8 @@ contract VoteEscrowNft is IVoteEscrow, ERC721, ReentrancyGuard {
   }
 
   function mint(uint256 amount, uint32 length) public nonReentrant returns (uint256) {
-    require(amount > 0, "Amount zero");
-    require(length > 0, "Length zero");
+    //require(amount > 0, "Amount zero");
+    //require(length > 0, "Length zero");
 
     uint256 id = nextID;
     nextID++;
@@ -78,8 +78,10 @@ contract VoteEscrowNft is IVoteEscrow, ERC721, ReentrancyGuard {
       length: length,
       startTime: nextEpochTime()
     });
+
     totalVotingPower = totalVotingPower + (amount*length);
     _safeMint(msg.sender, id);
+
     underlying.safeTransferFrom(msg.sender, address(this), amount);
 
     return id;

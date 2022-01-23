@@ -3,20 +3,70 @@ pragma solidity ^0.8.6;
 
 import "ds-test/test.sol";
 
+import "./BasicERC20.sol";
 import "./VoteEscrowNft.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
-contract VoteEscrowNftTest is DSTest {
+interface IHevm {
+    // Set timestamp to x
+    function warp(uint x) external;
+    // Set block to x
+    function roll(uint x) external;
+    //  Sets the slot loc of contract c to val
+    function store(address c, bytes32 loc, bytes32 val) external;
+    // Reads the slot loc of contract c
+    function load(address c, bytes32 loc) external returns (bytes32 val);
+    // Signs the digest using the private key sk.
+    // Note that signatures produced via hevm.sign will leak the private key.
+    function sign(uint sk, bytes32 digest)
+        external returns (uint8 v, bytes32 r, bytes32 s);
+    // Derives an ethereum address from the private key sk.
+    // Note that hevm.addr(0) will fail with BadCheatCode as
+    // 0 is an invalid ECDSA private key.
+    function addr(uint sk) external returns (address addr);
+    // Executes the arguments as a command in the system shell and returns stdout.
+    // --ffi flag is required
+    function ffi(string[] calldata) external returns (bytes memory);
+}
+
+contract VoteEscrowNftTest is DSTest, IERC721Receiver {
     VoteEscrowNft nft;
+    BasicERC20 underlying;
+    IHevm hevm;
+    uint256 firstEpochTime;
+
+    function onERC721Received(
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external override returns (bytes4) {
+      return this.onERC721Received.selector;
+    }
 
     function setUp() public {
-        nft = new VoteEscrowNft();
+      hevm = IHevm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+      underlying = new BasicERC20("Foobar", "FOO", 18);
+      underlying.mint(address(this), 100 ether);
+      firstEpochTime = block.timestamp+1 days;
+      nft = new VoteEscrowNft(address(underlying), firstEpochTime, 1 days);
     }
 
     function testFail_basic_sanity() public {
-        assertTrue(false);
+      assertTrue(false);
     }
 
     function test_basic_sanity() public {
-        assertTrue(true);
+      assertTrue(true);
+    }
+
+    function test_nextEpochTime() public {
+      assertEq(nft.nextEpochTime(), firstEpochTime+1 days);
+    }
+
+    function test_mint() public {
+      underlying.approve(address(nft), 50 ether);
+      uint id = nft.mint(50 ether, 2);
+      assertEq(nft.votingPower(id), 50 ether * 2);
     }
 }
