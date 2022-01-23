@@ -7,3 +7,6 @@
 [submodule "lib/solmate"]
 	path = lib/solmate
 	url = https://github.com/Rari-capital/solmate
+[submodule "lib/lib/mStable-contracts"]
+	path = lib/lib/mStable-contracts
+	url = https://github.com/mstable/mStable-contracts
