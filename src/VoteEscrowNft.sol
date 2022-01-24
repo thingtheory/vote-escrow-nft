@@ -6,100 +6,88 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "./TimeDecayLockedWeight.sol";
 
-interface IVoteEscrow {
-  function votingPower(uint256) external view returns (uint256);
-  function totalVotingPower() external view returns (uint256);
-}
-
-contract VoteEscrowNft is IVoteEscrow, ERC721, ReentrancyGuard {
+contract VoteEscrowNft is ERC721, TimeDecayLockedWeight, ReentrancyGuard {
   using SafeERC20 for IERC20;
 
   IERC20 public immutable underlying;
-  uint256 public immutable firstEpochTime;
-  uint256 public immutable epochLength;
 
-  uint256 public override totalVotingPower;
-  uint256 public totalAmount;
-  uint256 public totalDecay;
-  uint256 public totalLength;
-  uint256 public lastUpdateEpoch;
   uint256 public nextID;
-  uint256[] public tokens;
-  mapping(uint256 => Lock) public locks;
 
-  struct Lock {
-    uint256 amount;
-    uint256 startTime;
-    uint32 length;
-  }
+  uint256[] public ownedIdx;
+  mapping(address=>uint256[]) public owned;
 
-  constructor(address underlyingToken, uint256 firstEpochTime_, uint256 epochLength_) ERC721("foo", "foo") {
+  constructor(address underlyingToken) ERC721("foo", "foo") TimeDecayLockedWeight(underlyingToken) {
     require(underlyingToken != address(0), "Underlying token cannot be zero");
     underlying = IERC20(underlyingToken);
-    require(firstEpochTime_ >= block.timestamp);
-    firstEpochTime = firstEpochTime_;
-    require(epochLength_ > 0);
-    epochLength = epochLength_;
   }
 
   function tokenURI(uint256 id) public pure override returns (string memory) {
     return string(abi.encodePacked("foo://", Strings.toString(id)));
   }
 
-  function currentEpoch() public view returns (uint256) {
-    if (firstEpochTime >= block.timestamp) {
-      return 0;
-    }
-    return (block.timestamp - firstEpochTime) / epochLength;
-  }
-
-  function nextEpochTime() public view returns (uint256) {
-    if (firstEpochTime >= block.timestamp) {
-      return firstEpochTime + epochLength;
-    }
-    return ((currentEpoch() + 1) * epochLength) + firstEpochTime;
-  }
-
-  function votingPower(uint256 id) public view override returns (uint256) {
-    Lock memory lock = locks[id];
-    return lock.amount * lock.length;
-  }
-
   function mint(uint256 amount, uint32 length) public nonReentrant returns (uint256) {
-    //require(amount > 0, "Amount zero");
-    //require(length > 0, "Length zero");
+    require(amount > 0, "Amount zero");
+    require(length > 0, "Length zero");
 
     uint256 id = nextID;
     nextID++;
-
-    locks[id] = Lock({
-      amount: amount,
-      length: length,
-      startTime: nextEpochTime()
-    });
-
-    totalVotingPower = totalVotingPower + (amount*length);
+    owned[msg.sender].push(id);
     _safeMint(msg.sender, id);
-
-    underlying.safeTransferFrom(msg.sender, address(this), amount);
+    _createLock(msg.sender, id, amount, block.timestamp + (length * 1 weeks));
 
     return id;
   }
 
+  function _addTokenForOwner(address owner_, uint256 id) internal {
+    owned[owner_].push(id);
+    ownedIdx[id] = owned[owner_].length - 1;
+  }
+
+  function _removeTokenForOwner(address owner_, uint256 id) internal {
+    uint256[] memory temp = owned[owner_];
+    uint idx = ownedIdx[id];
+    temp[idx] = temp[temp.length-1];
+    delete temp[temp.length-1];
+    owned[owner_] = temp;
+  }
+
   function redeem(uint256 id) public nonReentrant {
     require(_isApprovedOrOwner(msg.sender, id), "Not approved");
-    require(votingPower(id) == 0, "Lock not expired");
 
-    Lock memory lock = locks[id];
-    uint256 amount = lock.amount;
-    uint256 length = lock.length;
-
-    totalVotingPower = totalVotingPower - (amount*length);
-
+    _removeTokenForOwner(msg.sender, id);
     _burn(id);
-    delete locks[id];
+    _withdraw(msg.sender, id);
+  }
 
-    underlying.transfer(msg.sender, amount);
+  function transferFrom(
+    address from,
+    address to,
+    uint256 id
+  ) public override {
+    super.transferFrom(from, to, id);
+  }
+
+  function safeTransferFrom(
+    address from,
+    address to,
+    uint256 id
+  ) public override {
+    super.safeTransferFrom(from, to, id);
+  }
+
+  function safeTransferFrom(
+    address from,
+    address to,
+    uint256 id,
+    bytes memory data
+  ) public override {
+    super.safeTransferFrom(from, to, id, data);
+  }
+
+  function tokenForOwner(address owner_, uint256 idx) public view returns(uint256) {
+    return owned[owner_][idx];
   }
 }

@@ -4,22 +4,44 @@ pragma solidity 0.8.6;
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { ReentrancyGuard } from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import { StableMath } from "mstable/shared/StableMath.sol";
+import { Root } from "mstable/shared/Root.sol";
 
-contract TimeDecayLockedWeight is ReentrancyGuard {
+interface ITimeDecayLockedWeight {
+    function balanceOf(uint256 _id) external view returns (uint256);
+
+    function balanceOfAt(uint256 _id, uint256 _blockNumber)
+        external
+        view
+        returns (uint256);
+
+    function totalSupply() external view returns (uint256);
+
+    function totalSupplyAt(uint256 _blockNumber) external view returns (uint256);
+    function getLastUserPoint(uint256 _id)
+        external
+        view
+        returns (
+            int128 bias,
+            int128 slope,
+            uint256 ts
+        );
+}
+
+contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
+    using StableMath for uint256;
     using SafeERC20 for IERC20;
 
     /** Shared Events */
     event Deposit(
-        address indexed provider,
+        uint256 indexed provider,
         uint256 value,
         uint256 locktime,
         LockAction indexed action,
         uint256 ts
     );
-    event Withdraw(address indexed provider, uint256 value, uint256 ts);
-    event Ejected(address indexed ejected, address ejector, uint256 ts);
+    event Withdraw(uint256 indexed provider, uint256 value, uint256 ts);
+    event Ejected(uint256 indexed ejected, address ejector, uint256 ts);
     event Expired();
     event RewardAdded(uint256 reward);
     event RewardPaid(address indexed user, uint256 reward);
@@ -28,7 +50,6 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
     IERC20 public stakingToken;
     uint256 private constant WEEK = 7 days;
     uint256 public constant MAXTIME = 365 days;
-    uint256 public END;
     bool public expired = false;
 
     /** Lockup */
@@ -38,11 +59,6 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
     mapping(uint256 => uint256) public userPointEpoch;
     mapping(uint256 => int128) public slopeChanges;
     mapping(uint256 => LockedBalance) public locked;
-
-    // Voting token - Checkpointed view only ERC20
-    string public name;
-    string public symbol;
-    uint256 public decimals = 18;
 
     /** Rewards */
     // Updated upon admin deposit
@@ -92,8 +108,6 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
 
         /*decimals = IBasicToken(_stakingToken).decimals();*/
         /*require(decimals <= 18, "Cannot have more than 18 decimals");*/
-
-        END = block.timestamp + MAXTIME;
     }
 
     /** @dev Modifier to ensure contract has not yet expired */
@@ -192,12 +206,11 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
             uint256 newStatic = _staticBalance(userNewPoint.slope, block.timestamp, _newLocked.end);
             uint256 additiveStaticWeight = totalStaticWeight + newStatic;
             if (uEpoch > 0) {
-                uint256 oldStatic = _staticBalance(
-                    userPointHistory[_id][uEpoch].slope,
-                    userPointHistory[_id][uEpoch].ts,
-                    _oldLocked.end
-                );
-                additiveStaticWeight = additiveStaticWeight - oldStatic;
+                additiveStaticWeight = additiveStaticWeight - _staticBalance(
+                                                                  userPointHistory[_id][uEpoch].slope,
+                                                                  userPointHistory[_id][uEpoch].ts,
+                                                                  _oldLocked.end
+                                                              );
             }
             totalStaticWeight = additiveStaticWeight;
 
@@ -343,7 +356,7 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
      * @param _action See LockAction enum
      */
     function _depositFor(
-        uint256 _owner,
+        address _owner,
         uint256 _id,
         uint256 _value,
         uint256 _unlockTime,
@@ -387,10 +400,8 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
      * @param _value Total units of StakingToken to lockup
      * @param _unlockTime Time at which the stake should unlock
      */
-    function _createLock(uint256 _id, uint256 _value, uint256 _unlockTime)
+    function _createLock(address _owner, uint256 _id, uint256 _value, uint256 _unlockTime)
         internal
-        override
-        nonReentrant
         contractNotExpired
     {
         uint256 unlock_time = _floorToWeek(_unlockTime); // Locktime is rounded down to weeks
@@ -403,19 +414,16 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
         require(locked_.amount == 0, "Withdraw old tokens first");
 
         require(unlock_time > block.timestamp, "Can only lock until time in the future");
-        require(unlock_time <= END, "Voting lock can be 1 year max (until recol)");
 
-        _depositFor(_id, _value, unlock_time, locked_, LockAction.CREATE_LOCK);
+        _depositFor(_owner, _id, _value, unlock_time, locked_, LockAction.CREATE_LOCK);
     }
 
     /**
      * @dev Increases amount of stake thats locked up & resets decay
      * @param _value Additional units of StakingToken to add to exiting stake
      */
-    function _increaseLockAmount(uint256 _id, uint256 _value)
+    function _increaseLockAmount(address _owner, uint256 _id, uint256 _value)
         internal
-        override
-        nonReentrant
         contractNotExpired
     {
         LockedBalance memory locked_ = LockedBalance({
@@ -427,17 +435,15 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
         require(locked_.amount > 0, "No existing lock found");
         require(locked_.end > block.timestamp, "Cannot add to expired lock. Withdraw");
 
-        _depositFor(_id, _value, 0, locked_, LockAction.INCREASE_LOCK_AMOUNT);
+        _depositFor(_owner, _id, _value, 0, locked_, LockAction.INCREASE_LOCK_AMOUNT);
     }
 
     /**
      * @dev Increases length of lockup & resets decay
      * @param _unlockTime New unlocktime for lockup
      */
-    function _increaseLockLength(uint256 _id, uint256 _unlockTime)
+    function _increaseLockLength(address _owner, uint256 _id, uint256 _unlockTime)
         internal
-        override
-        nonReentrant
         contractNotExpired
     {
         LockedBalance memory locked_ = LockedBalance({
@@ -449,9 +455,8 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
         require(locked_.amount > 0, "Nothing is locked");
         require(locked_.end > block.timestamp, "Lock expired");
         require(unlock_time > locked_.end, "Can only increase lock WEEK");
-        require(unlock_time <= END, "Voting lock can be 1 year max (until recol)");
 
-        _depositFor(_id, 0, unlock_time, locked_, LockAction.INCREASE_LOCK_TIME);
+        _depositFor(_owner, _id, 0, unlock_time, locked_, LockAction.INCREASE_LOCK_TIME);
     }
 
     /**
@@ -459,7 +464,7 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
      * @param _owner User for which to withdraw
      * @param _id ID for which to withdraw
      */
-    function _withdraw(address _owner, uint256 _id) internal nonReentrant {
+    function _withdraw(address _owner, uint256 _id) internal {
         LockedBalance memory oldLock = LockedBalance({
             end: locked[_id].end,
             amount: locked[_id].amount
@@ -712,7 +717,7 @@ contract TimeDecayLockedWeight is ReentrancyGuard {
             _staticBalance(
                 userPointHistory[_id][uepoch].slope,
                 userPointHistory[_id][uepoch].ts,
-                locked[_addr].end
+                locked[_id].end
             );
     }
 
