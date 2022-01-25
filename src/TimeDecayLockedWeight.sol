@@ -8,16 +8,16 @@ import { StableMath } from "mstable/shared/StableMath.sol";
 import { Root } from "mstable/shared/Root.sol";
 
 interface ITimeDecayLockedWeight {
-    function balanceOf(uint256 _id) external view returns (uint256);
+    function weightOf(uint256 _id) external view returns (uint256);
 
-    function balanceOfAt(uint256 _id, uint256 _blockNumber)
+    function weightOfAt(uint256 _id, uint256 _blockNumber)
         external
         view
         returns (uint256);
 
-    function totalSupply() external view returns (uint256);
+    function totalWeight() external view returns (uint256);
 
-    function totalSupplyAt(uint256 _blockNumber) external view returns (uint256);
+    function totalWeightAt(uint256 _blockNumber) external view returns (uint256);
     function getLastUserPoint(uint256 _id)
         external
         view
@@ -53,6 +53,7 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
     bool public expired = false;
 
     /** Lockup */
+    uint256 public maxLockLength;
     uint256 public globalEpoch;
     Point[] public pointHistory;
     mapping(uint256 => Point[]) public userPointHistory;
@@ -95,7 +96,8 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
     }
 
     constructor(
-        address _stakingToken
+        address _stakingToken,
+        uint256 _maxLockLength
     ) {
         stakingToken = IERC20(_stakingToken);
         Point memory init = Point({
@@ -106,8 +108,7 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
         });
         pointHistory.push(init);
 
-        /*decimals = IBasicToken(_stakingToken).decimals();*/
-        /*require(decimals <= 18, "Cannot have more than 18 decimals");*/
+        maxLockLength = _maxLockLength;
     }
 
     /** @dev Modifier to ensure contract has not yet expired */
@@ -414,6 +415,7 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
         require(locked_.amount == 0, "Withdraw old tokens first");
 
         require(unlock_time > block.timestamp, "Can only lock until time in the future");
+        require(unlock_time <= _floorToWeek(block.timestamp)+ (maxLockLength * 1 weeks), "Exceeds max lock length");
 
         _depositFor(_owner, _id, _value, unlock_time, locked_, LockAction.CREATE_LOCK);
     }
@@ -455,6 +457,7 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
         require(locked_.amount > 0, "Nothing is locked");
         require(locked_.end > block.timestamp, "Lock expired");
         require(unlock_time > locked_.end, "Can only increase lock WEEK");
+        require(unlock_time <= _floorToWeek(block.timestamp)+ (maxLockLength * 1 weeks), "Exceeds max lock length");
 
         _depositFor(_owner, _id, 0, unlock_time, locked_, LockAction.INCREASE_LOCK_TIME);
     }
@@ -544,11 +547,11 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
     }
 
     /**
-     * @dev Gets curent user voting weight (aka effectiveStake)
-     * @param _id User for which to return the balance
-     * @return uint256 Balance of user
+     * @dev Gets curent ID voting weight (aka effectiveStake)
+     * @param _id ID for which to return the weight
+     * @return uint256 Weight of ID
      */
-    function balanceOf(uint256 _id) public view override returns (uint256) {
+    function weightOf(uint256 _id) public view override returns (uint256) {
         uint256 epoch = userPointEpoch[_id];
         if (epoch == 0) {
             return 0;
@@ -564,12 +567,12 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
     }
 
     /**
-     * @dev Gets a users votingWeight at a given blockNumber
-     * @param _id User for which to return the balance
-     * @param _blockNumber Block at which to calculate balance
-     * @return uint256 Balance of user
+     * @dev Gets an ID's votingWeight at a given blockNumber
+     * @param _id User for which to return the weight
+     * @param _blockNumber Block at which to calculate weight
+     * @return uint256 Weight of ID
      */
-    function balanceOfAt(uint256 _id, uint256 _blockNumber)
+    function weightOfAt(uint256 _id, uint256 _blockNumber)
         public
         view
         override
@@ -622,7 +625,7 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
      * @dev Calculates total supply of votingWeight at a given time _t
      * @param _point Most recent point before time _t
      * @param _t Time at which to calculate supply
-     * @return totalSupply at given point in time
+     * @return total weight at given point in time
      */
     function _supplyAt(Point memory _point, uint256 _t) internal view returns (uint256) {
         Point memory lastPoint = _point;
@@ -658,10 +661,10 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
     }
 
     /**
-     * @dev Calculates current total supply of votingWeight
-     * @return totalSupply of voting token weight
+     * @dev Calculates current total of votingWeight
+     * @return total of voting token weight
      */
-    function totalSupply() public view override returns (uint256) {
+    function totalWeight() public view override returns (uint256) {
         uint256 epoch_ = globalEpoch;
         Point memory lastPoint = pointHistory[epoch_];
         return _supplyAt(lastPoint, block.timestamp);
@@ -670,9 +673,9 @@ contract TimeDecayLockedWeight is ITimeDecayLockedWeight {
     /**
      * @dev Calculates total supply of votingWeight at a given blockNumber
      * @param _blockNumber Block number at which to calculate total supply
-     * @return totalSupply of voting token weight at the given blockNumber
+     * @return total of voting token weight at the given blockNumber
      */
-    function totalSupplyAt(uint256 _blockNumber) public view override returns (uint256) {
+    function totalWeightAt(uint256 _blockNumber) public view override returns (uint256) {
         require(_blockNumber <= block.number, "Must pass block number in the past");
 
         uint256 epoch = globalEpoch;

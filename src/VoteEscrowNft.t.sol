@@ -49,15 +49,7 @@ contract VoteEscrowNftTest is DSTest, IERC721Receiver {
       hevm = IHevm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
       underlying = new BasicERC20("Foobar", "FOO", 18);
       underlying.mint(address(this), 1000 ether);
-      nft = new VoteEscrowNft(address(underlying));
-    }
-
-    function testFail_basic_sanity() public {
-      assertTrue(false);
-    }
-
-    function test_basic_sanity() public {
-      assertTrue(true);
+      nft = new VoteEscrowNft(address(underlying), 10);
     }
 
     function test_mint() public {
@@ -68,39 +60,40 @@ contract VoteEscrowNftTest is DSTest, IERC721Receiver {
     function test_token_for_owner() public {
       underlying.approve(address(nft), 150 ether);
       uint id = nft.mint(50 ether, 2);
-      assertEq(nft.tokenForOwner(address(this), 0), id);
+      assertEq(nft.tokenOfOwnerByIndex(address(this), 0), id);
+      id = nft.mint(50 ether, 2);
+      assertEq(nft.tokenOfOwnerByIndex(address(this), 1), id);
     }
 
-    function test_total_supply() public {
+    function test_total_weight() public {
       underlying.approve(address(nft), 150 ether);
       nft.mint(50 ether, 2);
       nft.mint(50 ether, 2);
-      assertEq(nft.totalSupply(), 4*expect);
+      assertEq(nft.totalWeight(), 4*expect);
     }
 
-    function test_balance_of() public {
+    function test_weight_of() public {
       underlying.approve(address(nft), 150 ether);
       uint id = nft.mint(50 ether, 1);
-      assertEq(nft.balanceOf(id), expect);
+      assertEq(nft.weightOf(id), expect);
       id = nft.mint(50 ether, 2);
-      assertEq(nft.balanceOf(id), 2*expect);
+      assertEq(nft.weightOf(id), 2*expect);
       id = nft.mint(50 ether, 3);
-      assertEq(nft.balanceOf(id), 3*expect);
+      assertEq(nft.weightOf(id), 3*expect);
     }
 
-    function test_balance_decays() public {
+    function test_weight_decays() public {
       underlying.approve(address(nft), 100 ether);
-      uint bal = underlying.balanceOf(address(this));
       uint id = nft.mint(50 ether, 4);
-      assertEq(nft.balanceOf(id), expect*4);
+      assertEq(nft.weightOf(id), expect*4);
       hevm.warp(block.timestamp + 1 weeks);
-      assertEq(nft.balanceOf(id), expect*3);
+      assertEq(nft.weightOf(id), expect*3);
       hevm.warp(block.timestamp + 1 weeks);
-      assertEq(nft.balanceOf(id), expect*2);
+      assertEq(nft.weightOf(id), expect*2);
       hevm.warp(block.timestamp + 1 weeks);
-      assertEq(nft.balanceOf(id), expect);
+      assertEq(nft.weightOf(id), expect);
       hevm.warp(block.timestamp + 1 weeks);
-      assertEq(nft.balanceOf(id), 0);
+      assertEq(nft.weightOf(id), 0);
     }
 
     function test_redeem() public {
@@ -118,9 +111,18 @@ contract VoteEscrowNftTest is DSTest, IERC721Receiver {
       (int128 amount, uint256 end) = nft.locked(id);
       hevm.warp(end);
 
-      assertEq(nft.balanceOf(id), 0);
+      assertEq(nft.weightOf(id), 0);
       bal = underlying.balanceOf(address(this));
       nft.redeem(id);
       assertEq(underlying.balanceOf(address(this))-bal, 50 ether);
+    }
+
+    function test_increase_lock_length() public {
+      underlying.approve(address(nft), 100 ether);
+      uint bal = underlying.balanceOf(address(this));
+      uint id = nft.mint(50 ether, 1);
+      assertEq(nft.weightOf(id), expect);
+      nft.increaseLockLength(id, 1);
+      assertEq(nft.weightOf(id), 2*expect);
     }
 }
